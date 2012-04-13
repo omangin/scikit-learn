@@ -1,5 +1,8 @@
+# -*- coding: utf-8 -*-
+
 """ Non-negative matrix factorization
 """
+# Author: Olivier Mangin <olivier.mangin@inria.fr> (Beta-NMF implementation)
 # Author: Vlad Niculae
 #         Lars Buitinck <L.J.Buitinck@uva.nl>
 # Author: Chih-Jen Lin, National Taiwan University (original projected gradient
@@ -533,6 +536,347 @@ class ProjectedGradientNMF(BaseEstimator, TransformerMixin):
         for j in xrange(0, X.shape[0]):
             H[j, :], _ = nnls(self.components_.T, X[j, :])
         return H
+
+
+class BetaNMF(BaseEstimator, TransformerMixin):
+    """Non negative factorization with beta divergence cost.
+
+    Parameters
+    ----------
+    X: {array-like, sparse matrix}, shape = [n_samples, n_features]
+        Data the model will be fit to.
+
+    n_components: int or None
+        Number of components, if n_components is not set all components
+        are kept
+
+    init:  'nndsvd' |  'nndsvda' | 'nndsvdar' | int | RandomState
+        Method used to initialize the procedure.
+        Default: 'nndsvdar'
+        Valid options::
+
+            'nndsvd': Nonnegative Double Singular Value Decomposition (NNDSVD)
+                initialization (better for sparseness)
+            'nndsvda': NNDSVD with zeros filled with the average of X
+                (better when sparsity is not desired)
+            'nndsvdar': NNDSVD with zeros filled with small random values
+                (generally faster, less accurate alternative to NNDSVDa
+                for when sparsity is not desired)
+            int seed or RandomState: non-negative random matrices
+
+    update: 'gradient' | 'maxmin' | 'heuristic'
+        Update methods::
+
+            'gradient': simple alternate projected gradient descent
+                on beta-divergence,
+            'maxmin': Maximization-Minimization updates
+            'heuristic': (default) Heuristic updates
+
+    beta: double, default: 2
+        Beta parameter of the divergence used to compute error between data
+        and reconstruction.
+
+    tol: double, default: 1e-4
+        Tolerance value used in stopping conditions.
+
+    max_iter: int, default: 200
+        Number of iterations to compute.
+
+    eta: double, default: 0.1
+        Update coefficient. For gradient update only.
+
+    subit: int, default: 10
+        Number of sub-iterations to perform on W (resp. H) before switching
+        to H (resp. W) update.
+
+    Attributes
+    ----------
+    `components_` : array, [n_components, n_features]
+        Non-negative components of the data
+
+    Examples
+    --------
+
+    >>> import numpy as np
+    >>> X = np.array([[1,1], [2, 1], [3, 1.2], [4, 1], [5, 0.8], [6, 1]])
+    >>> from sklearn.decomposition import BetaNMF
+    >>> model = BetaNMF(n_components=2, init=0)
+    >>> model.fit(X) #doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
+    BetaNMF(beta=2, eps=1.e-8, eta=0.1, init=0, max_iter=200, n_components=2,
+            subit=10, tol=0.0001, update=heuristic)
+    >>> model.components_
+    array([[ 0.77032744,  0.11118662],
+           [ 0.38526873,  0.38228063]])
+
+    Notes
+    -----
+    This implements
+
+    Févotte, C., & Idier, J. (2011). Algorithms for nonnegative matrix
+    factorization with the β-divergence.  Neural Computation, 29(9),
+    2421-2456. doi:http://dx.doi.org/10.1162/NECO_a_00168
+    """
+
+    updates = ('gradient', 'heuristic', 'maxmin')
+
+    def __init__(self, n_components=None, beta=2, init=None,
+            update='heuristic', tol=1e-4, max_iter=200, eps=1.e-8, subit=10,
+            eta=0.1):
+        self.n_components = n_components
+        self.beta = beta
+        if update not in BetaNMF.updates:
+            raise ValueError(
+                'Invalid update parameter: got %r instead of one of %r' %
+                (update, BetaNMF.updates))
+        self.update = update
+        self.init = init
+        self.tol = tol
+        self.max_iter = max_iter
+        self.eps = eps
+        # Only for max-min updates
+        self.gamma_exp = self._gamma_exponent()
+        # Only for gradient updates
+        self.subit = subit
+        self.eta = eta
+
+    def _init(self, X):
+        n_samples, n_features = X.shape
+
+        if self.init == 'nndsvd':
+            W, H = _initialize_nmf(X, self.n_components)
+        elif self.init == 'nndsvda':
+            W, H = _initialize_nmf(X, self.n_components, variant='a')
+        elif self.init == 'nndsvdar':
+            W, H = _initialize_nmf(X, self.n_components, variant='ar')
+        else:
+            try:
+                rng = check_random_state(self.init)
+                W = rng.randn(n_samples, self.n_components)
+                # we do not write np.abs(W, out=W) to stay compatible with
+                # numpy 1.5 and earlier where the 'out' keyword is not
+                # supported as a kwarg on ufuncs
+                np.abs(W, W)
+                H = rng.randn(self.n_components, n_features)
+                np.abs(H, H)
+            except ValueError:
+                raise ValueError(
+                    'Invalid init parameter: got %r instead of one of %r' %
+                    (self.init, (None, 'nndsvd', 'nndsvda', 'nndsvdar',
+                                 int, np.random.RandomState)))
+
+        return W, H
+
+    # Update rules
+
+    def _update_W(self, X, W, H, weights=1.):
+        if self.update == 'gradient':
+            # Alternate projected gradient updates
+            for _ in range(self.subit):
+                gradW = self._grad_W(X, W, H, weights=weights)
+                up_W = W - self.eta * gradW
+                return up_W * (up_W > 0)
+        elif self.update == 'maxmin':
+            # Maximization-Minimization update
+            return W * (self._heuristic_W(X, W, H, weights=weights)
+                    ** self.gamma_exp)
+        elif self.update == 'heuristic':
+            # Heuristic update
+            return W * self._heuristic_W(X, W, H, weights=weights)
+
+    def _update_H(self, X, W, H, weights=1.):
+        if self.update == 'gradient':
+            # Alternate projected gradient updates
+            for _ in range(self.subit):
+                gradH = self._grad_H(X, W, H, weights=weights)
+                up_H = H - self.eta * gradH
+                return up_H * (up_H > 0)
+        elif self.update == 'maxmin':
+            # Maximization-Minimization update
+            return H * (self._heuristic_H(X, W, H, weights=weights)
+                    ** self.gamma_exp)
+        elif self.update == 'heuristic':
+            # Heuristic update
+            return H * self._heuristic_H(X, W, H, weights=weights)
+
+    def fit_transform(self, X, y=None, weights=1., _fit=True):
+        """Learn a NMF model for the data X and returns the transformed data.
+
+        This is more efficient than calling fit followed by transform.
+
+        Parameters
+        ----------
+
+        X: {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Data matrix to be decomposed
+
+        weights: {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Weights on the cost function used as coefficients on each
+            element of the data. If smaller dimension is provided, standard
+            numpy broadcasting is used.
+
+        _fit: if True (default), update the model, else only compue transform
+
+        Returns
+        -------
+        data: array, [n_samples, n_components]
+            Transformed data
+        """
+        X = atleast2d_or_csr(X)
+        check_non_negative(X, "NMF.fit")
+
+        n_samples, n_features = X.shape
+
+        if not self.n_components:
+            self.n_components = n_features
+
+        W, H = self._init(X)
+
+        if _fit:
+            self.components_ = H
+
+        prev_error = np.Inf
+        tol = max(0.00001, self.tol) * self.error(X, W, self.components_,
+                weights=weights)
+        print 'tol:', tol
+
+        for n_iter in xrange(1, self.max_iter + 1):
+            # Stopping condition
+            error = self.error(X, W, self.components_, weights=weights)
+            if prev_error - error < tol:
+                break
+            prev_error = error
+
+            # update W
+            W = self._update_W(X, W, self.components_)
+
+            if _fit:
+                # update H
+                self.components_ = self._update_H(X, W, self.components_)
+
+        if n_iter == self.max_iter:
+            warnings.warn("Iteration limit reached during fit")
+
+        return W
+
+    def fit(self, X, y=None, **params):
+        """Learn a NMF model for the data X.
+
+        Parameters
+        ----------
+
+        X: {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Data matrix to be decomposed
+
+        Returns
+        -------
+        self
+        """
+        self.fit_transform(X, **params)
+        return self
+
+    def transform(self, X, **params):
+        """Transform the data X according to the fitted NMF model
+
+        Parameters
+        ----------
+
+        X: {array-like, sparse matrix}, shape = [n_samples, n_features]
+            Data matrix to be transformed by the model
+
+        Returns
+        -------
+        data: array, [n_samples, n_components]
+            Transformed data
+        """
+        params['_fit'] = False
+        return self.fit_transform(X, **params)
+
+    # Helpers for beta divergence and related updates
+
+    def beta_divergence(self, X, Y, weights=1.):
+        """Returns the self.beta-divergence from matrix X to Y.
+        This is computed value-wise and then summed over all coefficients.
+        """
+        if self.beta == 0:
+            q = np.divide(X, Y + self.eps)
+            v = q - np.log(q) - 1.
+        elif self.beta == 1:
+            v = np.multiply(X, np.log(np.divide(X, Y + self.eps))) - X + Y
+        else:
+            v = X ** self.beta
+            v += (self.beta - 1.) * ((Y + self.eps) ** self.beta)
+            v -= self.beta * np.multiply(X, (Y + self.eps) ** (self.beta - 1.))
+            v /= self.beta * (self.beta - 1.)
+        return np.sum(weights * v)
+
+    def _gamma_exponent(self):
+        """Exponent used for heuristic update from [Fevotte2011].
+        """
+        if self.beta < 1.:
+            return 1. / (2. - self.beta)
+        elif self.beta > 2:
+            return 1. / (self.beta - 1)
+        else:
+            return 1.
+
+    def _der_beta_div_der_y(self, X, Y):
+        """Returns the result of the elemtent-wise application to matrices X
+        and Y of the partial derivative of the self.beta-divergence, regarding
+        second variable.
+        """
+        if self.beta == 0:
+            # d_beta'(x|y) = 1 / y - x / y**2
+            Yinv = 1. / (Y + self.eps)
+            return Yinv - X * (Yinv ** 2)
+        elif self.beta == 1:
+            # d_beta'(x|y) = 1 - x / y
+            return 1. - X / (Y + self.eps)
+        else:
+            # d_beta'(x|y) = y ** (beta - 1) - x * (y ** (beta - 2))
+            return ((self.eps + Y) ** (self.beta - 1)
+                    - X * ((Y + self.eps) ** (self.beta - 2)))
+
+    def _grad_W(self, X, W, H, weights=1.):
+        """Returns the gradient (in form of a matrix) of the loss function
+        for given values of X, W, H.
+        """
+        return np.dot(weights * self._der_beta_div_der_y(X, np.dot(W, H)), H.T)
+
+    def _grad_H(self, X, W, H, weights=1.):
+        """Returns the gradient (in form of a matrix) of the loss function
+        for given values of X, W, H.
+        """
+        return np.dot(W.T, weights * self._der_beta_div_der_y(X, np.dot(W, H)))
+        # Could also be defined as grad_W(self.beta, X.T, H.T, W.T).T
+
+    def _heuristic_W(self, X, W, H, weights=1.):
+        reconstr = weights * np.dot(W, H)
+        numerator = np.dot(X * ((reconstr + self.eps) ** (self.beta - 2)), H.T)
+        return np.divide(numerator,
+                np.dot((reconstr + self.eps) ** (self.beta - 1), H.T))
+
+    def _heuristic_H(self, X, W, H, weights=1.):
+        reconstr = weights * np.dot(W, H)
+        numerator = np.dot(W.T, X * ((reconstr + self.eps) ** (self.beta - 2)))
+        return np.divide(numerator,
+                np.dot(W.T, (reconstr + self.eps) ** (self.beta - 1)))
+        # Same remark than for gradient
+
+    # Errors and performance estimations
+
+    def error(self, X, W, H, weights=1.):
+        return self.beta_divergence(X, np.dot(W, H), weights=weights)
+
+    # Projections
+
+    def scale(self, W, H, factors):
+        """Scale W columns and H rows inversely, according to the given
+        coefficients.
+        """
+        factors = np.array(factors)[np.newaxis, :]
+        s_W = W * factors
+        s_H = H / factors.T + self.eps
+        return s_W, s_H
 
 
 class NMF(ProjectedGradientNMF):
