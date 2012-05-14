@@ -220,6 +220,7 @@ Samples generator
    decomposition.SparseCoder
    decomposition.DictionaryLearning
    decomposition.MiniBatchDictionaryLearning
+   decomposition.BetaNMF
 
 .. autosummary::
    :toctree: generated/

@@ -467,6 +467,7 @@ class ProjectedGradientNMF(BaseEstimator, TransformerMixin):
         tolH = tolW
 
         for n_iter in xrange(1, self.max_iter + 1):
+            print n_iter
             # stopping condition
             # as discussed in paper
             proj_norm = norm(np.r_[gradW[np.logical_or(gradW < 0, W > 0)],
@@ -602,11 +603,11 @@ class BetaNMF(BaseEstimator, TransformerMixin):
     >>> from sklearn.decomposition import BetaNMF
     >>> model = BetaNMF(n_components=2, init=0)
     >>> model.fit(X) #doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
-    BetaNMF(beta=2, eps=1.e-8, eta=0.1, init=0, max_iter=200, n_components=2,
+    BetaNMF(beta=2, eps=1.e-8, eta=0.1, init=None, max_iter=200, n_components=2,
             subit=10, tol=0.0001, update=heuristic)
     >>> model.components_
-    array([[ 0.77032744,  0.11118662],
-           [ 0.38526873,  0.38228063]])
+    array([[ 0.68495703,  0.36004651]
+           [ 0.58376531,  0.04665704]])
 
     Notes
     -----
@@ -735,9 +736,7 @@ class BetaNMF(BaseEstimator, TransformerMixin):
             self.components_ = H
 
         prev_error = np.Inf
-        tol = max(0.00001, self.tol) * self.error(X, W, self.components_,
-                weights=weights)
-        print 'tol:', tol
+        tol = self.tol * n_samples * n_features
 
         for n_iter in xrange(1, self.max_iter + 1):
             # Stopping condition
