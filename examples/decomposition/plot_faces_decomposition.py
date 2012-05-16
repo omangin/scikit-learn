@@ -75,6 +75,10 @@ estimators = [
                        tol=5e-3, sparseness='components'),
      False, False),
 
+    ('Non-negative components - BetaNMF',
+     decomposition.BetaNMF(n_components=n_components, init='nndsvd', tol=5e-5),
+     False, False),
+
     ('Independent components - FastICA',
      decomposition.FastICA(n_components=n_components, whiten=True,
                            max_iter=10),

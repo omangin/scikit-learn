@@ -242,7 +242,41 @@ def _nls_subproblem(V, W, H_init, tol, max_iter):
     return H, grad, n_iter
 
 
-class ProjectedGradientNMF(BaseEstimator, TransformerMixin):
+class BaseNMF(BaseEstimator, TransformerMixin):
+
+    def __init__(self, n_components=None, init=None):
+        self.n_components = n_components
+        self.init = init
+
+    def _init(self, X):
+        n_samples, n_features = X.shape
+
+        if self.init == 'nndsvd':
+            W, H = _initialize_nmf(X, self.n_components)
+        elif self.init == 'nndsvda':
+            W, H = _initialize_nmf(X, self.n_components, variant='a')
+        elif self.init == 'nndsvdar':
+            W, H = _initialize_nmf(X, self.n_components, variant='ar')
+        else:
+            try:
+                rng = check_random_state(self.init)
+                W = rng.randn(n_samples, self.n_components)
+                # we do not write np.abs(W, out=W) to stay compatible with
+                # numpy 1.5 and earlier where the 'out' keyword is not
+                # supported as a kwarg on ufuncs
+                np.abs(W, W)
+                H = rng.randn(self.n_components, n_features)
+                np.abs(H, H)
+            except ValueError:
+                raise ValueError(
+                    'Invalid init parameter: got %r instead of one of %r' %
+                    (self.init, (None, 'nndsvd', 'nndsvda', 'nndsvdar',
+                                 int, np.random.RandomState)))
+
+        return W, H
+
+
+class ProjectedGradientNMF(BaseNMF):
     """Non-Negative matrix factorization by Projected Gradient (NMF)
 
     Parameters
@@ -350,8 +384,7 @@ class ProjectedGradientNMF(BaseEstimator, TransformerMixin):
 
     def __init__(self, n_components=None, init="nndsvdar", sparseness=None,
                  beta=1, eta=0.1, tol=1e-4, max_iter=200, nls_max_iter=2000):
-        self.n_components = n_components
-        self.init = init
+        self.BaseNMF(init=init, n_components=n_components)
         self.tol = tol
         if sparseness not in (None, 'data', 'components'):
             raise ValueError(
@@ -362,33 +395,6 @@ class ProjectedGradientNMF(BaseEstimator, TransformerMixin):
         self.eta = eta
         self.max_iter = max_iter
         self.nls_max_iter = nls_max_iter
-
-    def _init(self, X):
-        n_samples, n_features = X.shape
-
-        if self.init == 'nndsvd':
-            W, H = _initialize_nmf(X, self.n_components)
-        elif self.init == 'nndsvda':
-            W, H = _initialize_nmf(X, self.n_components, variant='a')
-        elif self.init == 'nndsvdar':
-            W, H = _initialize_nmf(X, self.n_components, variant='ar')
-        else:
-            try:
-                rng = check_random_state(self.init)
-                W = rng.randn(n_samples, self.n_components)
-                # we do not write np.abs(W, out=W) to stay compatible with
-                # numpy 1.5 and earlier where the 'out' keyword is not
-                # supported as a kwarg on ufuncs
-                np.abs(W, W)
-                H = rng.randn(self.n_components, n_features)
-                np.abs(H, H)
-            except ValueError:
-                raise ValueError(
-                    'Invalid init parameter: got %r instead of one of %r' %
-                    (self.init, (None, 'nndsvd', 'nndsvda', 'nndsvdar',
-                                 int, np.random.RandomState)))
-
-        return W, H
 
     def _update_W(self, X, H, W, tolW):
         n_samples, n_features = X.shape
@@ -603,8 +609,8 @@ class BetaNMF(BaseEstimator, TransformerMixin):
     >>> from sklearn.decomposition import BetaNMF
     >>> model = BetaNMF(n_components=2, init=0)
     >>> model.fit(X) #doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
-    BetaNMF(beta=2, eps=1.e-8, eta=0.1, init=None, max_iter=200, n_components=2,
-            subit=10, tol=0.0001, update=heuristic)
+    BetaNMF(beta=2, eps=1.e-8, eta=0.1, init=None, max_iter=200,
+            n_components=2, subit=10, tol=0.0001, update=heuristic)
     >>> model.components_
     array([[ 0.68495703,  0.36004651]
            [ 0.58376531,  0.04665704]])
@@ -623,15 +629,14 @@ class BetaNMF(BaseEstimator, TransformerMixin):
     def __init__(self, n_components=None, beta=2, init=None,
             update='heuristic', tol=1e-4, max_iter=200, eps=1.e-8, subit=10,
             eta=0.1):
-        self.n_components = n_components
+        self.BaseNMF(init=init, n_components=n_components)
+        self.tol = tol
         self.beta = beta
         if update not in BetaNMF.updates:
             raise ValueError(
                 'Invalid update parameter: got %r instead of one of %r' %
                 (update, BetaNMF.updates))
         self.update = update
-        self.init = init
-        self.tol = tol
         self.max_iter = max_iter
         self.eps = eps
         # Only for max-min updates
@@ -639,33 +644,6 @@ class BetaNMF(BaseEstimator, TransformerMixin):
         # Only for gradient updates
         self.subit = subit
         self.eta = eta
-
-    def _init(self, X):
-        n_samples, n_features = X.shape
-
-        if self.init == 'nndsvd':
-            W, H = _initialize_nmf(X, self.n_components)
-        elif self.init == 'nndsvda':
-            W, H = _initialize_nmf(X, self.n_components, variant='a')
-        elif self.init == 'nndsvdar':
-            W, H = _initialize_nmf(X, self.n_components, variant='ar')
-        else:
-            try:
-                rng = check_random_state(self.init)
-                W = rng.randn(n_samples, self.n_components)
-                # we do not write np.abs(W, out=W) to stay compatible with
-                # numpy 1.5 and earlier where the 'out' keyword is not
-                # supported as a kwarg on ufuncs
-                np.abs(W, W)
-                H = rng.randn(self.n_components, n_features)
-                np.abs(H, H)
-            except ValueError:
-                raise ValueError(
-                    'Invalid init parameter: got %r instead of one of %r' %
-                    (self.init, (None, 'nndsvd', 'nndsvda', 'nndsvdar',
-                                 int, np.random.RandomState)))
-
-        return W, H
 
     # Update rules
 
@@ -739,6 +717,7 @@ class BetaNMF(BaseEstimator, TransformerMixin):
         tol = self.tol * n_samples * n_features
 
         for n_iter in xrange(1, self.max_iter + 1):
+            print n_iter
             # Stopping condition
             error = self.error(X, W, self.components_, weights=weights)
             if prev_error - error < tol:
@@ -850,15 +829,17 @@ class BetaNMF(BaseEstimator, TransformerMixin):
 
     def _heuristic_W(self, X, W, H, weights=1.):
         reconstr = weights * np.dot(W, H)
-        numerator = np.dot(X * ((reconstr + self.eps) ** (self.beta - 2)), H.T)
-        return np.divide(numerator,
-                np.dot((reconstr + self.eps) ** (self.beta - 1), H.T))
+        return np.divide(
+                np.dot(X * ((reconstr + self.eps) ** (self.beta - 2)), H.T),
+                np.dot((reconstr + self.eps) ** (self.beta - 1), H.T)
+                )
 
     def _heuristic_H(self, X, W, H, weights=1.):
         reconstr = weights * np.dot(W, H)
-        numerator = np.dot(W.T, X * ((reconstr + self.eps) ** (self.beta - 2)))
-        return np.divide(numerator,
-                np.dot(W.T, (reconstr + self.eps) ** (self.beta - 1)))
+        return np.divide(
+                np.dot(W.T, X * ((reconstr + self.eps) ** (self.beta - 2))),
+                np.dot(W.T, (reconstr + self.eps) ** (self.beta - 1))
+                )
         # Same remark than for gradient
 
     # Errors and performance estimations
