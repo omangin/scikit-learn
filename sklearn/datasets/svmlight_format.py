@@ -15,8 +15,15 @@ libsvm command line programs.
 #          Olivier Grisel <olivier.grisel@ensta.org>
 # License: Simple BSD.
 
+from bz2 import BZ2File
+from contextlib import closing
+import gzip
+import io
+import os.path
+
 import numpy as np
 import scipy.sparse as sp
+
 from ._svmlight_format import _load_svmlight_file
 
 
@@ -85,10 +92,26 @@ def load_svmlight_file(f, n_features=None, dtype=np.float64,
                                      zero_based))
 
 
+def _gen_open(f):
+    if isinstance(f, int):  # file descriptor
+        return io.open(f, "rb")
+    elif not isinstance(f, basestring):
+        raise TypeError("expected {str, int, file-like}, got %s" % type(f))
+
+    _, ext = os.path.splitext(f)
+    if ext == ".gz":
+        return gzip.open(f, "rb")
+    elif ext == ".bz2":
+        return BZ2File(f, "rb")
+    else:
+        return open(f, "rb")
+
+
 def _open_and_load(f, dtype, multilabel, zero_based):
     if hasattr(f, "read"):
         return _load_svmlight_file(f, dtype, multilabel, zero_based)
-    with open(f, "rb") as f:
+    # XXX remove closing when Python 2.7+/3.1+ required
+    with closing(_gen_open(f)) as f:
         return _load_svmlight_file(f, dtype, multilabel, zero_based)
 
 
@@ -103,8 +126,10 @@ def load_svmlight_files(files, n_features=None, dtype=np.float64,
 
     Parameters
     ----------
-    files : iterable over {str, file-like}
-        (Paths to) files to load.
+    files : iterable over {str, file-like, int}
+        (Paths of) files to load. If a path ends in ".gz" or ".bz2", it will
+        be uncompressed on the fly. If an integer is passed, it is assumed to
+        be a file descriptor.
 
     n_features: int or None
         The number of features to use. If None, it will be inferred from the
