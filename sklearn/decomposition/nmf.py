@@ -545,6 +545,7 @@ class ProjectedGradientNMF(BaseNMF):
         return H
 
 
+# TODO Finish adaptation to sparse matrices
 class BetaNMF(BaseEstimator, TransformerMixin):
     """Non negative factorization with beta divergence cost.
 
@@ -776,16 +777,16 @@ class BetaNMF(BaseEstimator, TransformerMixin):
         This is computed value-wise and then summed over all coefficients.
         """
         if self.beta == 0:
-            q = np.divide(X, Y + self.eps)
+            q = X / (Y + self.eps)
             v = q - np.log(q) - 1.
         elif self.beta == 1:
-            v = np.multiply(X, np.log(np.divide(X, Y + self.eps))) - X + Y
+            v = X * np.log(X / (Y + self.eps)) - X + Y
         else:
             v = X ** self.beta
             v += (self.beta - 1.) * ((Y + self.eps) ** self.beta)
-            v -= self.beta * np.multiply(X, (Y + self.eps) ** (self.beta - 1.))
+            v -= self.beta * X * (Y + self.eps) ** (self.beta - 1.)
             v /= self.beta * (self.beta - 1.)
-        return np.sum(weights * v)
+        return (weights * v).sum()
 
     def _gamma_exponent(self):
         """Exponent used for heuristic update from [Fevotte2011].
@@ -829,17 +830,13 @@ class BetaNMF(BaseEstimator, TransformerMixin):
 
     def _heuristic_W(self, X, W, H, weights=1.):
         reconstr = weights * np.dot(W, H)
-        return np.divide(
-                np.dot(X * ((reconstr + self.eps) ** (self.beta - 2)), H.T),
-                np.dot((reconstr + self.eps) ** (self.beta - 1), H.T)
-                )
+        return (np.dot(X * ((reconstr + self.eps) ** (self.beta - 2)), H.T) /
+                np.dot((reconstr + self.eps) ** (self.beta - 1), H.T))
 
     def _heuristic_H(self, X, W, H, weights=1.):
         reconstr = weights * np.dot(W, H)
-        return np.divide(
-                np.dot(W.T, X * ((reconstr + self.eps) ** (self.beta - 2))),
-                np.dot(W.T, (reconstr + self.eps) ** (self.beta - 1))
-                )
+        return (np.dot(W.T, X * ((reconstr + self.eps) ** (self.beta - 2))) /
+                np.dot(W.T, (reconstr + self.eps) ** (self.beta - 1)))
         # Same remark than for gradient
 
     # Errors and performance estimations
@@ -854,8 +851,8 @@ class BetaNMF(BaseEstimator, TransformerMixin):
         coefficients.
         """
         factors = np.array(factors)[np.newaxis, :]
-        s_W = W * factors
-        s_H = H / factors.T + self.eps
+        s_W = W * (factors.T + self.eps)
+        s_H = H / (factors.T + self.eps)
         return s_W, s_H
 
 
