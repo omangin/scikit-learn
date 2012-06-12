@@ -384,7 +384,7 @@ class ProjectedGradientNMF(BaseNMF):
 
     def __init__(self, n_components=None, init="nndsvdar", sparseness=None,
                  beta=1, eta=0.1, tol=1e-4, max_iter=200, nls_max_iter=2000):
-        self.BaseNMF(init=init, n_components=n_components)
+        BaseNMF.__init__(self, init=init, n_components=n_components)
         self.tol = tol
         if sparseness not in (None, 'data', 'components'):
             raise ValueError(
@@ -473,7 +473,6 @@ class ProjectedGradientNMF(BaseNMF):
         tolH = tolW
 
         for n_iter in xrange(1, self.max_iter + 1):
-            print n_iter
             # stopping condition
             # as discussed in paper
             proj_norm = norm(np.r_[gradW[np.logical_or(gradW < 0, W > 0)],
@@ -545,8 +544,7 @@ class ProjectedGradientNMF(BaseNMF):
         return H
 
 
-# TODO Finish adaptation to sparse matrices
-class BetaNMF(BaseEstimator, TransformerMixin):
+class BetaNMF(BaseNMF):
     """Non negative factorization with beta divergence cost.
 
     Parameters
@@ -610,8 +608,8 @@ class BetaNMF(BaseEstimator, TransformerMixin):
     >>> from sklearn.decomposition import BetaNMF
     >>> model = BetaNMF(n_components=2, init=0)
     >>> model.fit(X) #doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
-    BetaNMF(beta=2, eps=1.e-8, eta=0.1, init=None, max_iter=200,
-            n_components=2, subit=10, tol=0.0001, update=heuristic)
+    BetaNMF(beta=2, eps=1e-08, eta=0.1, init=0, max_iter=200, n_components=2,
+        subit=10, tol=0.0001, update='heuristic')
     >>> model.components_
     array([[ 0.68495703,  0.36004651]
            [ 0.58376531,  0.04665704]])
@@ -630,7 +628,7 @@ class BetaNMF(BaseEstimator, TransformerMixin):
     def __init__(self, n_components=None, beta=2, init=None,
             update='heuristic', tol=1e-4, max_iter=200, eps=1.e-8, subit=10,
             eta=0.1):
-        self.BaseNMF(init=init, n_components=n_components)
+        BaseNMF.__init__(self, init=init, n_components=n_components)
         self.tol = tol
         self.beta = beta
         if update not in BetaNMF.updates:
@@ -694,7 +692,7 @@ class BetaNMF(BaseEstimator, TransformerMixin):
             element of the data. If smaller dimension is provided, standard
             numpy broadcasting is used.
 
-        _fit: if True (default), update the model, else only compue transform
+        _fit: if True (default), update the model, else only compute transform
 
         Returns
         -------
@@ -718,7 +716,6 @@ class BetaNMF(BaseEstimator, TransformerMixin):
         tol = self.tol * n_samples * n_features
 
         for n_iter in xrange(1, self.max_iter + 1):
-            print n_iter
             # Stopping condition
             error = self.error(X, W, self.components_, weights=weights)
             if prev_error - error < tol:
@@ -841,7 +838,9 @@ class BetaNMF(BaseEstimator, TransformerMixin):
 
     # Errors and performance estimations
 
-    def error(self, X, W, H, weights=1.):
+    def error(self, X, W, H=None, weights=1.):
+        if H is None:
+            H = self.components_
         return self.beta_divergence(X, np.dot(W, H), weights=weights)
 
     # Projections

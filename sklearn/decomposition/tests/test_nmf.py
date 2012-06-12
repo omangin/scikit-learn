@@ -50,6 +50,8 @@ def test_initialize_variants():
         assert_true(np.allclose(evl[ref != 0], ref[ref != 0]))
 
 
+# Tests for ProjectedGradientNMF
+
 @raises(ValueError)
 def test_projgrad_nmf_fit_nn_input():
     """Test model fit behaviour on negative input"""
@@ -136,6 +138,48 @@ def test_sparse_input():
     A = csr_matrix(A)
     T2 = nmf.ProjectedGradientNMF(n_components=5, init=999).fit_transform(A)
     assert_array_almost_equal(T1, T2)
+
+
+# Tests for BetaNMF
+
+@raises(ValueError)
+def test_beta_nmf_fit_nn_input():
+    """Test model fit behaviour on negative input"""
+    A = -np.ones((2, 2))
+    m = nmf.BetaNMF(n_components=2, init=None)
+    m.fit(A)
+
+
+def test_beta_nmf_fit_nn_output():
+    """Test that the decomposition does not contain negative values"""
+    A = np.c_[5 * np.ones(5) - xrange(1, 6),
+              5 * np.ones(5) + xrange(1, 6)]
+    for init in (None, 'nndsvd', 'nndsvda', 'nndsvdar'):
+        model = nmf.BetaNMF(n_components=2, init=init)
+        transf = model.fit_transform(A)
+        assert_false((model.components_ < 0).any() or
+                     (transf < 0).any())
+
+
+def test_beta_nmf_transform_close():
+    """Test that the transform is not too far away"""
+    model = nmf.BetaNMF(5, init=None)
+    coefs = np.abs(random_state.randn(20, 5)) 
+    compo = np.abs(random_state.randn(5, 7)) 
+    data = np.dot(coefs, compo)
+    model.components_ = compo
+    trans = model.transform(data)
+    print (coefs - trans) / coefs
+    print np.max((coefs - trans) / coefs)
+    assert(np.allclose(coefs, trans, atol=1.e-2))
+
+
+def test_beta_nmf_fit_transform_close():
+    """Test that the fit plus transform reconstruction is not too far away"""
+    model = nmf.BetaNMF(5, init=None)
+    data = np.abs(random_state.randn(6, 5)) 
+    trans = model.fit_transform(data)
+    assert(model.error(data, trans) < 0.05)
 
 
 if __name__ == '__main__':
