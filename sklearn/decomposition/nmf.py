@@ -591,6 +591,8 @@ def _scale(matrix, factors, axis=0):
     if not (axis == 0 or axis == 1):
         raise ValueError('Wrong axis, should be 0 (scaling lines)\
                 or 1 (scaling columns).')
+    # Transform factors given as columne shaped matrices
+    factors = np.squeeze(np.asarray(factors))
     if axis == 1:
         factors = factors[:, np.newaxis]
     return np.multiply(matrix, factors)
@@ -601,14 +603,30 @@ def _generalized_KL(x, y, eps=1.e-8):
             ).sum()
 
 
+def _sparse_dot(a, b, refmat):
+    """Computes dot product of a and b on indices where refmat is nonnzero
+    and returns sparse csr matrix.
+    """
+    c = sp.lil_matrix(refmat.shape)
+    # TODO Optimize... (17/09/2012)
+    for i, j in zip(*refmat.nonzero()):
+        c[i, j] = np.multiply(a[i, :], b[:, j]).sum()
+    # To implement: more efficient ?
+    # >> ii, jj = refmat.nonzeros()
+    # >> a[ii, :] -> rotate axis
+    # >> multiply with
+    # >> b[:, jj] -> rotate axis
+    # >> sum axis -1
+    # >> build sp.coo_matrix
+    # >> transform to lil or other
+    return c.tocsr()
+
+
 class KLdivNMF(BaseNMF):
     """Non negative factorization with Kullback Leibler divergence cost.
 
     Parameters
     ----------
-    X: {array-like, sparse matrix}, shape = [n_samples, n_features]
-        Data the model will be fit to.
-
     n_components: int or None
         Number of components, if n_components is not set all components
         are kept
@@ -802,10 +820,22 @@ class KLdivNMF(BaseNMF):
 
     # Errors and performance estimations
 
-    def error(self, X, W, H=None, weights=1.):
+    # TODO Not really KL (17/09/2012)
+    # This is not really the generalized KL (WH.data only contains values
+    # where X is non-zero. Computing the generalized KL div requires computing
+    # the real WH which might be very costly for big sparse X.
+    def error(self, X, W, H=None, weights=1., eps=1.e-8):
         if H is None:
             H = self.components_
-        return _generalized_KL(X, np.dot(W, H))
+        if sp.issparse(X):
+            WH = _sparse_dot(W, H, X)
+            return (np.multiply(X.data, np.log(np.divide(X.data + eps,
+                WH.data + eps))) - X.data + WH.data).sum()
+        else:
+            WH = W.dot(H)
+            return (np.multiply(X, np.log(np.divide(X + eps, WH + eps))) - X
+                    + WH * (X != 0)).sum()
+        #return _generalized_KL(X, np.dot(W, H))
 
     # Projections
 
@@ -823,20 +853,32 @@ class KLdivNMF(BaseNMF):
 
     @classmethod
     def _Q(cls, X, W, H, eps=1.e-8):
-        return np.divide(X, np.dot(W, H) + eps)
+        """Computes X / (WH) where / is elementwise and WH is a matrix product.
+        """
+        # X should be at least 2D or csr
+        if sp.issparse(X):
+            X.eliminate_zeros()
+            WH = _sparse_dot(W, H, X)
+            # TODO Move to unittest if _sparse_dot (17/09/2012)
+            assert((WH.indptr == X.indptr).all())
+            assert((WH.indices == X.indices).all())
+            WH.data = (X.data + eps) / (WH.data + eps)
+            return WH
+        else:
+            return np.divide(X + eps, np.dot(W, H) + eps)
 
     @classmethod
     def _updated_W(cls, X, W, H, weights=1., Q=None, eps=1.e-8):
         if Q is None:
             Q = cls._Q(X, W, H, eps=eps)
-        W = np.multiply(W, np.dot(Q, H.T))
+        W = np.multiply(W, safe_sparse_dot(Q, H.T))
         return W
 
     @classmethod
     def _updated_H(cls, X, W, H, weights=1., Q=None, eps=1.e-8):
         if Q is None:
             Q = cls._Q(X, W, H, eps=eps)
-        H = np.multiply(H, np.dot(W.T, Q))
+        H = np.multiply(H, safe_sparse_dot(W.T, Q))
         H = _normalize_sum(H, axis=1)
         return H
 
