@@ -697,7 +697,7 @@ class KLdivNMF(BaseNMF):
         self.subit = subit
 
     def fit_transform(self, X, y=None, weights=1., _fit=True,
-                      return_errors=False):
+                      return_errors=False, scale_W=False):
         """Learn a NMF model for the data X and returns the transformed data.
 
         This is more efficient than calling fit followed by transform.
@@ -716,6 +716,11 @@ class KLdivNMF(BaseNMF):
         return_errors: boolean
             if True, the list of reconstruction errors along iterations is
             returned
+
+        scale_W: boolean (default: False)
+            Whether to force scaling of W during updates. This is only relevant
+            if components are normalized. By default when not fitting this is
+            assumed to be false.
 
         _fit: if True (default), update the model, else only compute transform
 
@@ -765,7 +770,7 @@ class KLdivNMF(BaseNMF):
         else:
             return W
 
-    def _update(self, X, W, _fit=True, _scale_W=False, eps=1.e-8):
+    def _update(self, X, W, _fit=True, scale_W=False, eps=1.e-8):
         """Perform one update iteration.
 
         Updates components if _fit and returns updated coefficients.
@@ -775,12 +780,12 @@ class KLdivNMF(BaseNMF):
             _fit: boolean (default: True)
                 Whether to update components.
 
-            _scale_W: boolean (default: False)
+            scale_W: boolean (default: False)
                 Whether to force scaling of W. This is only relevant if
                 components are normalized. By default when not fitting
                 this is assume false.
         """
-        if _fit or _scale_W:
+        if _fit or scale_W:
             # This is only relevant if components are normalized.
             # Not always usefull but might improve convergence speed:
             # Scale W lines to have same sum than X lines
