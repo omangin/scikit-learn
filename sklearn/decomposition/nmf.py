@@ -570,10 +570,10 @@ class ProjectedGradientNMF(BaseNMF):
         return H
 
 
-def _normalize_sum(a, axis=0):
+def _normalize_sum(a, axis=0, eps=1.e-16):
     if axis >= len(a.shape):
         raise ValueError
-    return a / np.expand_dims(np.sum(a, axis=axis), axis)
+    return a / (eps + np.expand_dims(np.sum(a, axis=axis), axis))
 
 
 def _scale(matrix, factors, axis=0):

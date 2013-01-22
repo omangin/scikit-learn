@@ -66,6 +66,13 @@ class TestNormalizeSum(unittest.TestCase):
         with self.assertRaises(ValueError):
             nmf._normalize_sum(a, axis=3)
 
+    def test_robust_on_zero(self):
+        a = np.random.random((2, 4))
+        a[1, :] *= 0
+        norm = nmf._normalize_sum(a, axis=1)
+        print norm
+        assert(not np.any(np.isnan(norm)))
+
 
 class TestScale(unittest.TestCase):
 
