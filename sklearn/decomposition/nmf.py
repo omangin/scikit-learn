@@ -648,6 +648,12 @@ class KLdivNMF(BaseNMF):
                 for when sparsity is not desired)
             'random': non-negative random matrices
 
+    sparseness: 'data' | 'components' | None, default: None
+        Where to enforce sparsity in the model.
+
+    sp_coef: float, default: 0
+        Regularization coefficient for enforcing sparsity
+
     tol: double, default: 1e-4
         Tolerance value used in stopping conditions.
 
@@ -689,12 +695,21 @@ class KLdivNMF(BaseNMF):
     """
 
     def __init__(self, n_components=None, init='random', tol=1e-6,
-            max_iter=200, eps=1.e-8, subit=10, random_state=None):
+            max_iter=200, eps=1.e-8, subit=10,  sparseness=None,
+            sp_coef=0, random_state=None):
         BaseNMF.__init__(self, init=init, n_components=n_components,
                 random_state=random_state)
         self.tol = tol
         self.max_iter = max_iter
         self.eps = eps
+        # Sparseness coefficients for regularization
+        self.lambda_W = 0
+        self.lambda_H = 0
+        self.sparseness = sparseness
+        if sparseness == 'data':
+            self.lambda_W = sp_coef
+        elif sparseness == 'components':
+            self.lambda_H = sp_coef
         # Only for gradient updates
         self.subit = subit
 
@@ -790,12 +805,12 @@ class KLdivNMF(BaseNMF):
             # Not always usefull but might improve convergence speed:
             # Scale W lines to have same sum than X lines
             W = _scale(_normalize_sum(W, axis=1), X.sum(axis=1), axis=1)
-        Q = self._Q(X, W, self.components_, eps=eps)
         # update W
-        W = self._updated_W(X, W, self.components_, Q=Q)
+        W = self._updated_W(X, W, self.components_, sp_coef=self.lambda_W)
         if _fit:
             # update H
-            self.components_ = self._updated_H(X, W, self.components_, Q=Q)
+            self.components_ = self._updated_H(X, W, self.components_,
+                                               sp_coef=self.lambda_H)
         return W
 
     def fit(self, X, y=None, **params):
@@ -865,28 +880,28 @@ class KLdivNMF(BaseNMF):
     # Update rules
 
     @classmethod
-    def _Q(cls, X, W, H, eps=1.e-8):
+    def _Q(cls, X, W, H, eps=1.e-8, sp_coef=0):
         """Computes X / (WH) where / is elementwise and WH is a matrix product.
         """
         # X should be at least 2D or csr
         if sp.issparse(X):
             WH = _sparse_dot(W, H, X)
-            WH.data = (X.data + eps) / (WH.data + eps)
+            WH.data = (X.data + eps) / (WH.data + sp_coef + eps)
             return WH
         else:
-            return np.divide(X + eps, np.dot(W, H) + eps)
+            return np.divide(X + eps, np.dot(W, H) + sp_coef + eps)
 
     @classmethod
-    def _updated_W(cls, X, W, H, weights=1., Q=None, eps=1.e-8):
+    def _updated_W(cls, X, W, H, weights=1., Q=None, eps=1.e-8, sp_coef=0):
         if Q is None:
-            Q = cls._Q(X, W, H, eps=eps)
+            Q = cls._Q(X, W, H, eps=eps, sp_coef=sp_coef)
         W = np.multiply(W, safe_sparse_dot(Q, H.T))
         return W
 
     @classmethod
-    def _updated_H(cls, X, W, H, weights=1., Q=None, eps=1.e-8):
+    def _updated_H(cls, X, W, H, weights=1., Q=None, eps=1.e-8, sp_coef=0):
         if Q is None:
-            Q = cls._Q(X, W, H, eps=eps)
+            Q = cls._Q(X, W, H, eps=eps, sp_coef=sp_coef)
         H = np.multiply(H, safe_sparse_dot(W.T, Q))
         H = _normalize_sum(H, axis=1)
         return H
