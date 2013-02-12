@@ -854,6 +854,7 @@ class KLdivNMF(BaseNMF):
         X = atleast2d_or_csr(X)
         if H is None:
             H = self.components_
+        penalization = self.lambda_W * W.sum() + self.lambda_H * H.sum()
         if sp.issparse(X):
             WH = _sparse_dot(W, H, X)
             # Avoid computing all values of WH to get their sum
@@ -861,9 +862,9 @@ class KLdivNMF(BaseNMF):
             return (np.multiply(
                 X.data,
                 np.log(np.divide(X.data + eps, WH.data + eps))
-                )).sum() - X.data.sum() + WH_sum
+                )).sum() - X.data.sum() + WH_sum + penalization
         else:
-            return _generalized_KL(X, np.dot(W, H))
+            return _generalized_KL(X, np.dot(W, H)) + penalization
 
     # Projections
 
